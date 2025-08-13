@@ -9,6 +9,7 @@ JavaScript
 
 Used APIs
 Open Weather API
+Up to date (Weather Report)
 
 Screenshot
 
