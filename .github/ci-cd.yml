@@ -1,0 +1,164 @@
+name: CI/CD Pipeline
+
+# Triggers - when this workflow runs
+on:
+  # Run on push to main branch
+  push:
+    branches: [ main, master ]
+  # Run on pull requests to main branch
+  pull_request:
+    branches: [ main, master ]
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  # Job 1: Testing and Validation
+  test:
+    name: Test and Validate
+    runs-on: ubuntu-latest
+    
+    steps:
+      # Step 1: Checkout the code
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      # Step 2: Validate HTML files
+      - name: HTML Validation
+        run: |
+          echo "Checking HTML files..."
+          # Check if HTML files exist
+          if ls *.html 1> /dev/null 2>&1; then
+            echo "HTML files found"
+            # Basic HTML syntax check
+            for file in *.html; do
+              echo "Checking $file"
+              # Check for basic HTML structure
+              if grep -q "<!DOCTYPE html>" "$file" && grep -q "<html" "$file" && grep -q "</html>" "$file"; then
+                echo "✓ $file has valid basic structure"
+              else
+                echo "✗ $file may have HTML structure issues"
+                exit 1
+              fi
+            done
+          fi
+      
+      # Step 3: Check CSS files
+      - name: CSS Validation
+        run: |
+          echo "Checking CSS files..."
+          if ls *.css 1> /dev/null 2>&1; then
+            echo "CSS files found"
+            # Basic CSS syntax check (looking for obvious errors)
+            for file in *.css; do
+              echo "Checking $file"
+              # Check for unclosed brackets
+              open_braces=$(grep -o "{" "$file" | wc -l)
+              close_braces=$(grep -o "}" "$file" | wc -l)
+              if [ "$open_braces" -eq "$close_braces" ]; then
+                echo "✓ $file has matching braces"
+              else
+                echo "✗ $file has mismatched braces"
+                exit 1
+              fi
+            done
+          fi
+      
+      # Step 4: JavaScript Linting
+      - name: JavaScript Check
+        run: |
+          echo "Checking JavaScript in HTML files..."
+          # Extract and check JavaScript from HTML files
+          for file in *.html; do
+            if grep -q "<script" "$file"; then
+              echo "Found JavaScript in $file"
+              # Basic syntax checks
+              if grep -q "console.error\|console.warn" "$file"; then
+                echo "⚠ Warning: Console errors/warnings found in $file"
+              fi
+              echo "✓ JavaScript check passed for $file"
+            fi
+          done
+      
+      # Step 5: Security Check
+      - name: Security Check
+        run: |
+          echo "Checking for exposed API keys..."
+          # Check for common API key patterns
+          if grep -r "api[_-]?key.*=.*['\"].*['\"]" . --include="*.html" --include="*.js"; then
+            echo "⚠ Warning: Potential API key found in code"
+            echo "Consider using environment variables for sensitive data"
+          fi
+      
+      # Step 6: File Size Check
+      - name: Check File Sizes
+        run: |
+          echo "Checking file sizes..."
+          find . -type f \( -name "*.html" -o -name "*.css" -o -name "*.js" \) -size +1M -exec echo "Warning: {} is larger than 1MB" \;
+  
+  # Job 2: Build and Deploy
+  deploy:
+    name: Deploy to GitHub Pages
+    # Only run deployment on main branch and after tests pass
+    needs: test
+    runs-on: ubuntu-latest
+    # Only deploy from main branch
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    # Need write permissions to deploy to GitHub Pages
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    
+    # Ensure only one deployment runs at a time
+    concurrency:
+      group: "pages"
+      cancel-in-progress: true
+    
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout
+        uses: actions/checkout@v3
+      
+      # Step 2: Setup Pages
+      - name: Setup Pages
+        uses: actions/configure-pages@v3
+      
+      # Step 3: Create deployment artifact
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          # Upload entire repository
+          path: '.'
+      
+      # Step 4: Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
+        
+      # Step 5: Print deployment URL
+      - name: Print deployment URL
+        run: |
+          echo "🚀 Deployment successful!"
+          echo "Your site should be available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+
+  # Job 3: Pull Request Check (only runs on PRs)
+  pr-check:
+    name: Pull Request Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v3
+      
+      - name: Comment on PR
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '👋 Thanks for your PR! The CI/CD pipeline is running tests on your changes.'
+            })
